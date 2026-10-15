@@ -1,0 +1,59 @@
+/* GENERATED - DO NOT EDIT. Source: spec/dmaeng.yaml */
+#ifndef DMAENG_REGS_H
+#define DMAENG_REGS_H
+
+/* Constants */
+#define DMAENG_ID_MAGIC 0x444D4131U
+#define DMAENG_VERSION 0x10000U
+#define DMAENG_RING_SIZE_MIN 0x2U
+#define DMAENG_RING_SIZE_MAX 0x1000U
+#define DMAENG_MAX_XFER_DEFAULT 0x10000U
+#define DMAENG_RING_ALIGN 0x1000U
+#define DMAENG_DESC_SIZE 0x20U
+#define DMAENG_REG_ACCESS_BYTES 0x4U
+
+/* Register offsets (BAR0) */
+#define DMAENG_REG_ID 0x00
+#define DMAENG_REG_VERSION 0x04
+#define DMAENG_REG_CTRL 0x08
+#define DMAENG_REG_STATUS 0x0C
+#define DMAENG_REG_RING_BASE_LO 0x10
+#define DMAENG_REG_RING_BASE_HI 0x14
+#define DMAENG_REG_RING_SIZE 0x18
+#define DMAENG_REG_HEAD 0x1C
+#define DMAENG_REG_TAIL 0x20
+#define DMAENG_REG_IRQ_STATUS 0x24
+#define DMAENG_REG_IRQ_MASK 0x28
+#define DMAENG_REG_ERR_CODE 0x2C
+#define DMAENG_REG_MAX_XFER 0x30
+
+/* Register bit fields */
+#define DMAENG_CTRL_ENABLE (1U << 0)
+#define DMAENG_CTRL_RESET (1U << 1)
+#define DMAENG_STATUS_BUSY (1U << 0)
+#define DMAENG_STATUS_ERROR (1U << 1)
+#define DMAENG_IRQ_STATUS_COMPLETION (1U << 0)
+#define DMAENG_IRQ_STATUS_ERROR (1U << 1)
+#define DMAENG_IRQ_MASK_COMPLETION (1U << 0)
+#define DMAENG_IRQ_MASK_ERROR (1U << 1)
+
+/* Descriptor field offsets (32 bytes, little-endian) */
+#define DMAENG_DESC_OFF_SRC 0x00
+#define DMAENG_DESC_OFF_DST 0x08
+#define DMAENG_DESC_OFF_LEN 0x10
+#define DMAENG_DESC_OFF_FLAGS 0x14
+#define DMAENG_DESC_OFF_STATUS 0x18
+#define DMAENG_DESC_OFF_RSVD 0x1C
+
+/* Descriptor flags */
+#define DMAENG_DESC_OWN (1U << 0)
+#define DMAENG_DESC_IRQ (1U << 1)
+#define DMAENG_DESC_LAST (1U << 2)
+
+/* Error codes */
+#define DMAENG_ERR_OK 0x0
+#define DMAENG_ERR_BAD_LEN 0x1
+#define DMAENG_ERR_DMA_FAIL 0x2
+#define DMAENG_ERR_BAD_DESC 0x3
+
+#endif /* DMAENG_REGS_H */

@@ -1,0 +1,173 @@
+# dmaeng register map and descriptor format.
+# SINGLE SOURCE OF TRUTH: scripts/gen-regs.py generates the C header,
+# the SystemVerilog package and docs/register-map.md from this file.
+# Shared contract with Project 1 Stage 2 Phase G (see CLAUDE.md section 5).
+
+constants:
+  ID_MAGIC: 0x444D4131        # "DMA1"
+  VERSION: 0x00010000         # major.minor
+  RING_SIZE_MIN: 2
+  RING_SIZE_MAX: 4096
+  MAX_XFER_DEFAULT: 65536
+  RING_ALIGN: 4096
+  DESC_SIZE: 32
+  REG_ACCESS_BYTES: 4         # 32-bit accesses only
+
+registers:
+  - name: ID
+    offset: 0x00
+    access: RO
+    reset: 0x444D4131
+    desc: Magic value, driver probe sanity check
+
+  - name: VERSION
+    offset: 0x04
+    access: RO
+    reset: 0x00010000
+    desc: Version, major.minor
+
+  - name: CTRL
+    offset: 0x08
+    access: RW
+    reset: 0x0
+    desc: Control
+    fields:
+      - name: ENABLE
+        bit: 0
+        desc: Enable the engine
+      - name: RESET
+        bit: 1
+        desc: Reset the engine, self-clearing
+
+  - name: STATUS
+    offset: 0x0C
+    access: RO
+    reset: 0x0
+    desc: Engine status
+    fields:
+      - name: BUSY
+        bit: 0
+        desc: Engine is processing descriptors
+      - name: ERROR
+        bit: 1
+        desc: Engine stopped on an error, cleared by CTRL.RESET
+
+  - name: RING_BASE_LO
+    offset: 0x10
+    access: RW
+    reset: 0x0
+    desc: Ring physical address, low 32 bits
+
+  - name: RING_BASE_HI
+    offset: 0x14
+    access: RW
+    reset: 0x0
+    desc: Ring physical address, high 32 bits
+
+  - name: RING_SIZE
+    offset: 0x18
+    access: RW
+    reset: 0x0
+    desc: Descriptor count, power of two, 2 to 4096
+
+  - name: HEAD
+    offset: 0x1C
+    access: RO
+    reset: 0x0
+    desc: Device consume index
+
+  - name: TAIL
+    offset: 0x20
+    access: RW
+    reset: 0x0
+    desc: Driver produce index, a write rings the doorbell
+
+  - name: IRQ_STATUS
+    offset: 0x24
+    access: RW1C
+    reset: 0x0
+    desc: Interrupt status, write 1 to clear
+    fields:
+      - name: COMPLETION
+        bit: 0
+        desc: A descriptor with DESC_IRQ completed
+      - name: ERROR
+        bit: 1
+        desc: The device hit an error
+
+  - name: IRQ_MASK
+    offset: 0x28
+    access: RW
+    reset: 0x0
+    desc: Interrupt mask, 1 = enabled
+    fields:
+      - name: COMPLETION
+        bit: 0
+        desc: Enable completion interrupt
+      - name: ERROR
+        bit: 1
+        desc: Enable error interrupt
+
+  - name: ERR_CODE
+    offset: 0x2C
+    access: RO
+    reset: 0x0
+    desc: Last error code, see error_codes
+
+  - name: MAX_XFER
+    offset: 0x30
+    access: RO
+    reset: 65536
+    desc: Maximum bytes per descriptor, larger is rejected with error 0x1
+
+descriptor:
+  size: 32
+  fields:
+    - name: src
+      offset: 0x00
+      width: 8
+      desc: Source physical address
+    - name: dst
+      offset: 0x08
+      width: 8
+      desc: Destination physical address
+    - name: len
+      offset: 0x10
+      width: 4
+      desc: Transfer length in bytes
+    - name: flags
+      offset: 0x14
+      width: 4
+      desc: See flags
+    - name: status
+      offset: 0x18
+      width: 4
+      desc: Written by the device on completion, before OWN is cleared
+    - name: rsvd
+      offset: 0x1C
+      width: 4
+      desc: Must be zero
+  flags:
+    - name: OWN
+      bit: 0
+      desc: 1 = device owns the descriptor, device clears on completion
+    - name: IRQ
+      bit: 1
+      desc: Raise completion interrupt when this descriptor finishes
+    - name: LAST
+      bit: 2
+      desc: Last descriptor in a logical batch, informational
+
+error_codes:
+  - name: OK
+    value: 0x0
+    desc: Success
+  - name: BAD_LEN
+    value: 0x1
+    desc: Invalid length, zero or exceeds MAX_XFER
+  - name: DMA_FAIL
+    value: 0x2
+    desc: Address translation failure, DMA access to guest memory failed
+  - name: BAD_DESC
+    value: 0x3
+    desc: Descriptor malformed, rsvd non-zero or misaligned ring
