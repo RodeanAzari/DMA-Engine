@@ -5,7 +5,7 @@ QEMU_PATH="$HOME/qemu-11.1.2/build/qemu-system-riscv64"
 IMAGES_PATH="$HOME/buildroot-2026.08/output/images"
 
 exec $QEMU_PATH \
-    -M virt \
+    -M virt,aia=aplic-imsic \
     -bios "$IMAGES_PATH/fw_jump.bin" \
     -append "rootwait root=/dev/vda ro" \
     -kernel "$IMAGES_PATH/Image" \
