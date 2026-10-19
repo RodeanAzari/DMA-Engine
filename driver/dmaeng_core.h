@@ -9,11 +9,34 @@
 #ifndef DMAENG_CORE_H
 #define DMAENG_CORE_H
 
+#include <linux/build_bug.h>
 #include <linux/interrupt.h>
 #include <linux/miscdevice.h>
+#include <linux/stddef.h>
 #include <linux/types.h>
 
+#include "dmaeng_regs.h"
+
 #define DRV_NAME "dmaeng"
+
+/* Descriptor as the device sees it (spec section 5.3), little-endian */
+struct dmaeng_desc {
+	__le64 src;		/* source DMA address */
+	__le64 dst;		/* destination DMA address */
+	__le32 len;		/* bytes */
+	__le32 flags;		/* DMAENG_DESC_OWN | _IRQ | _LAST */
+	__le32 status;		/* written by device before clearing OWN */
+	__le32 _rsvd;		/* must be zero */
+};
+
+/* Fail the build if the struct drifts from spec/dmaeng.yaml */
+static_assert(sizeof(struct dmaeng_desc) == DMAENG_DESC_SIZE);
+static_assert(offsetof(struct dmaeng_desc, src) == DMAENG_DESC_OFF_SRC);
+static_assert(offsetof(struct dmaeng_desc, dst) == DMAENG_DESC_OFF_DST);
+static_assert(offsetof(struct dmaeng_desc, len) == DMAENG_DESC_OFF_LEN);
+static_assert(offsetof(struct dmaeng_desc, flags) == DMAENG_DESC_OFF_FLAGS);
+static_assert(offsetof(struct dmaeng_desc, status) == DMAENG_DESC_OFF_STATUS);
+static_assert(offsetof(struct dmaeng_desc, _rsvd) == DMAENG_DESC_OFF_RSVD);
 
 struct dmaeng_dev;
 
@@ -29,6 +52,8 @@ struct dmaeng_dev {
 	const struct dmaeng_backend_ops *ops;	/* how to reach the device */
 	void *priv;				/* backend private state */
 	struct miscdevice misc;			/* /dev/dmaeng, embedded */
+	struct dmaeng_desc *ring;		/* CPU view of the ring */
+	dma_addr_t ring_dma;			/* device view, in RING_BASE */
 };
 
 int dmaeng_core_add(struct dmaeng_dev *d);
