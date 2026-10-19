@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * dmaeng_host.c - host backend: the dmaeng registers modelled in software,
+ * Host backend: the dmaeng registers modelled in software,
  * on a dummy platform device so the core can allocate DMA memory.
  *
  * Step 2: registers only. The engine thread that consumes descriptors

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * dmaeng_core.h - contract between the bus-independent core and a backend.
+ * Contract between the bus-independent core and a backend.
  *
  * A backend (host simulator today, PCI on Day 5) finds the device, fills
  * in a struct dmaeng_dev and calls dmaeng_core_add(). The core reaches

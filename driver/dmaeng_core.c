@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * dmaeng_core.c - bus-independent core of the dmaeng driver.
+ * Bus-independent core of the dmaeng driver.
  *
  * Talks to the device only through d->ops, so the same code runs on the
  * host simulator and on the PCI device. Ring, ioctl and mmap come later.
