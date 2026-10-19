@@ -8,3 +8,4 @@ modules.order
 build/
 output/
 __pycache__/
+*.mod.c

@@ -1,5 +1,8 @@
-obj-m += dmaeng.o
-dmaeng-y := dmaeng_core.o
+# Each backend is its own module with the core linked in.
+obj-m += dmaeng-host.o
+dmaeng-host-y := dmaeng_core.o dmaeng_host.o
+
+ccflags-y += -I$(src)/../include
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 
