@@ -10,6 +10,7 @@
 #define DMAENG_CORE_H
 
 #include <linux/build_bug.h>
+#include <linux/completion.h>
 #include <linux/interrupt.h>
 #include <linux/miscdevice.h>
 #include <linux/stddef.h>
@@ -54,6 +55,12 @@ struct dmaeng_dev {
 	struct miscdevice misc;			/* /dev/dmaeng, embedded */
 	struct dmaeng_desc *ring;		/* CPU view of the ring */
 	dma_addr_t ring_dma;			/* device view, in RING_BASE */
+	u32 ring_entries;			/* descriptors in the ring */
+	u32 tail;				/* next descriptor to fill */
+	void *buf;				/* CPU view of the data buffer */
+	dma_addr_t buf_dma;			/* device view */
+	size_t buf_bytes;
+	struct completion done;			/* signalled by the ISR */
 };
 
 int dmaeng_core_add(struct dmaeng_dev *d);
