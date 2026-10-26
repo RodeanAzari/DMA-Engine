@@ -19,8 +19,8 @@
 #define DMAENG_RING_BYTES	(DMAENG_RING_ENTRIES * sizeof(struct dmaeng_desc))
 
 static_assert((DMAENG_RING_ENTRIES & (DMAENG_RING_ENTRIES - 1)) == 0);
-static_assert(DMAENG_RING_ENTRIES >= DMAENG_RING_SIZE_MIN &&
-	      DMAENG_RING_ENTRIES <= DMAENG_RING_SIZE_MAX);
+static_assert((DMAENG_RING_ENTRIES >= DMAENG_RING_SIZE_MIN) &&
+	      (DMAENG_RING_ENTRIES <= DMAENG_RING_SIZE_MAX));
 
 static u32 dmaeng_rd(struct dmaeng_dev *d, u32 off)
 {
