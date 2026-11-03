@@ -1,6 +1,8 @@
 # Each backend is its own module with the core linked in.
 obj-m += dmaeng-host.o
 dmaeng-host-y := dmaeng_core.o dmaeng_host.o
+obj-m += dmaeng-pci.o
+dmaeng-pci-y := dmaeng_core.o dmaeng_pci.o
 
 ccflags-y += -I$(src)/../include
 
