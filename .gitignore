@@ -9,3 +9,4 @@ build/
 output/
 __pycache__/
 *.mod.c
+userspace/dmatest

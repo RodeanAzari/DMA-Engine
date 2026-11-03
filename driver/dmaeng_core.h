@@ -13,6 +13,7 @@
 #include <linux/completion.h>
 #include <linux/interrupt.h>
 #include <linux/miscdevice.h>
+#include <linux/mutex.h>
 #include <linux/stddef.h>
 #include <linux/types.h>
 
@@ -61,6 +62,7 @@ struct dmaeng_dev {
 	dma_addr_t buf_dma;			/* device view */
 	size_t buf_bytes;
 	struct completion done;			/* signalled by the ISR */
+	struct mutex submit_lock;		/* one transfer in flight */
 };
 
 int dmaeng_core_add(struct dmaeng_dev *d);
