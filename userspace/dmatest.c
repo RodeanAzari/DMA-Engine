@@ -412,7 +412,7 @@ static void bench_one(int fd, uint8_t *buf, enum path path, uint32_t len,
 		fprintf(out, "%s,%u,%llu,%llu\n", path_names[path], len,
 			(unsigned long long)user_ns[i],
 			(unsigned long long)kern_ns[i]);
-	printf("bench %-11s %6u B: %u samples\n", path_names[path], len, n);
+	printf("%-11s %6u B: %u samples\n", path_names[path], len, n);
 	fflush(stdout);
 }
 
@@ -428,7 +428,7 @@ static void bench(int fd, uint8_t *buf, const char *file, uint32_t n)
 	int p;
 
 	if (!user_ns || !kern_ns || !out) {
-		CHECK(0, "bench setup: %s", strerror(errno));
+		CHECK(0, "setup: %s", strerror(errno));
 		return;
 	}
 
