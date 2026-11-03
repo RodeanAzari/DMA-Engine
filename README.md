@@ -8,6 +8,10 @@ The driver has two interchangeable backends. One is a kernel thread on bare meta
 
 **Main result:** avoiding the interrupt wake-up cut p99 submission path latency by 69–81% under QEMU, and by 12–59% on bare metal for transfers up to 4 KiB. Polling from userspace was no better than polling in the kernel. [Results below](#results).
 
+![dmademo in the QEMU guest: the three submission paths interleaved, every copy verified](docs/imgs/dmademo-guest.gif)
+
+*`dmademo` in the riscv64 QEMU guest, real time: the driver probes the emulated PCIe device, then the three submission paths take turns copying 4 KiB, and every copy is checked byte for byte. The interrupt count at the end equals the number of blocking copies, because only that path asks for an MSI. These are software-path times under emulation, not DMA hardware latency; the measured results come from `dmatest --bench`, below. The recording is also in [docs/imgs/dmademo-guest.cast](docs/imgs/dmademo-guest.cast) for `asciinema play`.*
+
 ## Architecture
 
 ```
@@ -242,7 +246,7 @@ export ARCH=riscv CROSS_COMPILE=$BR/host/bin/riscv64-buildroot-linux-gnu- KDIR=$
 make -C driver
 make -C userspace CC=${CROSS_COMPILE}gcc
 unset ARCH CROSS_COMPILE KDIR
-mkdir -p /tmp/www && cp driver/dmaeng-pci.ko userspace/dmatest /tmp/www
+mkdir -p /tmp/www && cp driver/dmaeng-pci.ko userspace/dmatest userspace/dmademo /tmp/www
 (cd /tmp/www && python3 -m http.server 8000)
 ```
 
@@ -256,8 +260,8 @@ scripts/run-qemu.sh -device dmaeng
 
 ```sh
 cd /tmp
-wget http://10.0.2.2:8000/dmaeng-pci.ko http://10.0.2.2:8000/dmatest
-chmod +x dmatest
+wget http://10.0.2.2:8000/dmaeng-pci.ko http://10.0.2.2:8000/dmatest http://10.0.2.2:8000/dmademo
+chmod +x dmatest dmademo
 lspci | grep 1234
 insmod dmaeng-pci.ko
 ./dmatest
@@ -282,6 +286,8 @@ ALL OK
  17:       1190 PCI-MSI-0000:00:01.0   0 Edge      dmaeng
 ```
 
+`./dmademo` then gives the live view shown at the top, for 15 seconds by default (`./dmademo SECONDS BYTES`). It runs on the host backend too.
+
 To regenerate the plots and tables from the raw samples, install `matplotlib` and run `scripts/plot-latency.py` from the repo root.
 
 ## Repository layout
@@ -292,7 +298,7 @@ To regenerate the plots and tables from the raw samples, install `matplotlib` an
 | `include/`, `rtl/`, `docs/register-map.md` | Generated from the spec by `scripts/gen-regs.py` |
 | `qemu-device/` | The QEMU device model |
 | `driver/` | Core driver, host backend, PCI backend, userspace ABI |
-| `userspace/` | `dmatest`: tests and benchmark |
+| `userspace/` | `dmatest`: tests and benchmark; `dmademo`: live view |
 | `results/`, `docs/results.md` | Raw samples and full analysis |
 | `traces/` | Recorded device trace for future RTL verification |
 

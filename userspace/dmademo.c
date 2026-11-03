@@ -26,10 +26,10 @@
 
 #define SRC_OFF		0ULL
 #define DST_OFF		(512ULL * 1024)
-#define FINE_NS		100		/* percentile resolution */
-#define FINE_BINS	20000		/* up to 2 ms; beyond counts as overflow */
-#define HIST_BINS	36		/* log scale, 12 per decade */
-#define HIST_MIN_NS	1000		/* 1 us to 1 ms */
+#define FINE_NS		50		/* percentile resolution */
+#define FINE_BINS	40000		/* up to 2 ms; beyond counts as overflow */
+#define HIST_BINS	36		/* two decades, 18 bins each */
+#define HIST_STEP	1.1364636664	/* 10^(1/18) */
 #define FRAME_NS	100000000ULL
 #define POLL_TIMEOUT_NS	2000000000ULL
 
@@ -56,13 +56,11 @@ static const char * const path_rgb[NR_PATHS] = {
 
 struct stats {
 	uint32_t fine[FINE_BINS + 1];
-	uint32_t hist[HIST_BINS];
 	uint64_t copies;
 	uint64_t verified;
 };
 
 static struct stats stats[NR_PATHS];
-static uint64_t hist_edge[HIST_BINS + 1];
 static uint64_t bad_data, errors;
 static const uint8_t *ring;
 
@@ -96,12 +94,33 @@ static int poll_ring(uint32_t idx)
 
 static void record(struct stats *s, uint64_t ns)
 {
-	uint32_t b = 0;
-
 	s->fine[ns / FINE_NS < FINE_BINS ? ns / FINE_NS : FINE_BINS]++;
-	while (b < HIST_BINS - 1 && ns >= hist_edge[b + 1])
-		b++;
-	s->hist[b]++;
+}
+
+/* Fold the fine histogram into log-spaced display bins starting at lo_ns */
+static void fold(const struct stats *s, uint64_t lo_ns, uint32_t *hist)
+{
+	double edge = lo_ns * HIST_STEP;
+	uint32_t i, b = 0;
+
+	memset(hist, 0, HIST_BINS * sizeof(*hist));
+	for (i = lo_ns / FINE_NS; i < FINE_BINS; i++) {
+		while (b < HIST_BINS && (double)i * FINE_NS >= edge) {
+			b++;
+			edge *= HIST_STEP;
+		}
+		if (b == HIST_BINS)
+			break;
+		hist[b] += s->fine[i];
+	}
+}
+
+/* Writes an axis label, returns its width in columns */
+static int axis_label(char *buf, size_t n, uint64_t ns)
+{
+	if (ns >= 1000000)
+		return snprintf(buf, n, "%llums", (unsigned long long)(ns / 1000000));
+	return snprintf(buf, n, "%lluµs", (unsigned long long)(ns / 1000)) - 1;
 }
 
 static uint64_t percentile(const struct stats *s, uint32_t pct)
@@ -165,9 +184,17 @@ static void draw(uint32_t len, uint64_t elapsed_ns, int final)
 	static const char * const level[] = {
 		" ", "▁", "▂", "▃", "▄", "▅", "▆", "▇", "█",
 	};
-	uint64_t total = 0;
-	uint32_t peak, b;
-	int p;
+	uint64_t total = 0, lo = 1000, fastest = UINT64_MAX;
+	uint32_t hist[HIST_BINS], peak, b;
+	char l0[16], l1[16], l2[16];
+	int w0, w1, w2, p;
+
+	/* Axis starts at the decade below the fastest path's median */
+	for (p = 0; p < NR_PATHS; p++)
+		if (stats[p].copies && percentile(&stats[p], 50) < fastest)
+			fastest = percentile(&stats[p], 50);
+	while (lo * 10 <= fastest && lo < 100000)
+		lo *= 10;
 
 	printf("\033[H");
 	printf(" \033[1mdmaeng\033[0m live demo%*s%5.1f s\033[K\n", 51, "",
@@ -183,10 +210,11 @@ static void draw(uint32_t len, uint64_t elapsed_ns, int final)
 	for (p = 0; p < NR_PATHS; p++) {
 		const struct stats *s = &stats[p];
 
+		fold(s, lo, hist);
 		peak = 1;
 		for (b = 0; b < HIST_BINS; b++)
-			if (s->hist[b] > peak)
-				peak = s->hist[b];
+			if (hist[b] > peak)
+				peak = hist[b];
 
 		printf(" \033[38;2;%sm■\033[0m %-11s %8llu ", path_rgb[p],
 		       path_names[p], (unsigned long long)s->copies);
@@ -195,15 +223,18 @@ static void draw(uint32_t len, uint64_t elapsed_ns, int final)
 		printf("  \033[38;2;%sm", path_rgb[p]);
 		/* Bins under 1% of the peak stay blank: rare outliers are p99's job */
 		for (b = 0; b < HIST_BINS; b++)
-			printf("%s", level[s->hist[b] * 100ULL < peak ? 0 :
-				1 + (uint64_t)s->hist[b] * 7 / peak]);
+			printf("%s", level[hist[b] * 100ULL < peak ? 0 :
+				1 + (uint64_t)hist[b] * 7 / peak]);
 		printf("\033[0m\033[K\n");
 		total += s->copies;
 	}
 
-	/* Axis under the distributions: 12 bins per decade */
-	printf(" %43s\033[2m1µs         10µs        100µs       1ms\033[0m\033[K\n"
-	       "\033[K\n", "");
+	/* Axis under the distributions: a label at each decade */
+	w0 = axis_label(l0, sizeof(l0), lo);
+	w1 = axis_label(l1, sizeof(l1), lo * 10);
+	w2 = axis_label(l2, sizeof(l2), lo * 100);
+	printf(" %43s\033[2m%s%*s%s%*s%s\033[0m\033[K\n\033[K\n", "", l0,
+	       HIST_BINS / 2 - w0, "", l1, HIST_BINS / 2 - w1 - w2, "", l2);
 	printf(" %llu copies, %.1f MB moved, %llu verified, %llu mismatched, %llu errors\033[K\n",
 	       (unsigned long long)total,
 	       total * (double)len / 1e6,
@@ -223,7 +254,6 @@ int main(int argc, char **argv)
 	struct dmaeng_info info;
 	uint8_t seed = 0;
 	uint8_t *buf;
-	uint32_t b;
 	int fd, p;
 
 	fd = open("/dev/dmaeng", O_RDWR);
@@ -247,11 +277,6 @@ int main(int argc, char **argv)
 		perror("mmap");
 		return 1;
 	}
-
-	/* 10^(1/12) per bin */
-	hist_edge[0] = HIST_MIN_NS;
-	for (b = 1; b <= HIST_BINS; b++)
-		hist_edge[b] = hist_edge[b - 1] * 1.2115276586;
 
 	printf("\033[2J\033[?25l");
 	start = now_ns();
