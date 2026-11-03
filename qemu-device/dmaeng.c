@@ -30,8 +30,7 @@
 #define DMAENG_BAR_BYTES	4096
 #define DMAENG_PCIE_CAP_OFF	0x80
 
-typedef struct DmaengState DmaengState;
-DECLARE_INSTANCE_CHECKER(DmaengState, DMAENG, TYPE_DMAENG)
+OBJECT_DECLARE_SIMPLE_TYPE(DmaengState, DMAENG)
 
 struct DmaengState {
 	PCIDevice pdev;
