@@ -58,7 +58,8 @@ struct DmaengState {
 	bool irq_level;			/* irq_status & irq_mask != 0 */
 };
 
-static void G_GNUC_PRINTF(2, 3) dmaeng_trace(DmaengState *s, const char *fmt, ...)
+G_GNUC_PRINTF(2, 3)
+static void dmaeng_trace(DmaengState *s, const char *fmt, ...)
 {
 	va_list ap;
 

@@ -165,14 +165,14 @@ static void test_concurrent_submitters(int fd, uint8_t *buf)
 /* A small trace still has to show a wrap, each size and an error */
 static void test_short(int fd, uint8_t *buf, const struct dmaeng_info *info)
 {
-	static const uint32_t lens[] = { 64, 256, 1024, COPY_LEN };
 	uint32_t i, n = info->ring_entries + 4;
 
 	for (i = 0; i < n; i++)
-		copy_and_verify(fd, buf, lens[0], i);
-	for (i = 0; i < sizeof(lens) / sizeof(lens[0]); i++)
-		copy_and_verify(fd, buf, lens[i], i);
-	printf("short: %u copies\n", n + 4);
+		copy_and_verify(fd, buf, 64, i);
+	copy_and_verify(fd, buf, 256, 1);
+	copy_and_verify(fd, buf, 1024, 2);
+	copy_and_verify(fd, buf, COPY_LEN, 3);
+	printf("short: %u copies\n", n + 3);
 }
 
 /* A fault must report its own error, and the next copy must still work */
