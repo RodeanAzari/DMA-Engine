@@ -63,6 +63,9 @@ struct dmaeng_dev {
 	size_t buf_bytes;
 	struct completion done;			/* signalled by the ISR */
 	struct mutex submit_lock;		/* one transfer in flight */
+	struct dmaeng_desc *nowait_desc;	/* NOWAIT submit not yet reaped */
+	unsigned long nowait_deadline;		/* jiffies; then treat as hung */
+	bool hw_error;				/* ISR saw IRQ_STATUS.ERROR */
 };
 
 int dmaeng_core_add(struct dmaeng_dev *d);

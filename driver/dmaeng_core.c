@@ -29,12 +29,18 @@
 
 #define DMAENG_XFER_TIMEOUT	HZ
 
+#define DMAENG_XFER_PATH_FLAGS	(DMAENG_XFER_POLL | DMAENG_XFER_NOWAIT)
+
 #ifdef DMAENG_FAULT_INJECT
-#define DMAENG_XFER_VALID_FLAGS	(DMAENG_XFER_FAULT_BAD_ADDR | \
+#define DMAENG_XFER_VALID_FLAGS	(DMAENG_XFER_PATH_FLAGS | \
+				 DMAENG_XFER_FAULT_BAD_ADDR | \
 				 DMAENG_XFER_FAULT_RSVD | \
-				 DMAENG_XFER_FAULT_NO_IRQ)
+				 DMAENG_XFER_FAULT_NO_IRQ | \
+				 DMAENG_XFER_FAULT_NO_OWN | \
+				 DMAENG_XFER_FAULT_RING_ALIGN | \
+				 DMAENG_XFER_FAULT_RING_ADDR)
 #else
-#define DMAENG_XFER_VALID_FLAGS	0U
+#define DMAENG_XFER_VALID_FLAGS	DMAENG_XFER_PATH_FLAGS
 #endif
 
 #define DMAENG_FAULT_ADDR	0xFFFFFFFFFFFF0000ULL
@@ -64,6 +70,8 @@ static irqreturn_t dmaeng_isr(int irq, void *dev_id)
 
 	/* Clear before the waiter scans the ring, or a new event is lost */
 	dmaeng_wr(d, DMAENG_REG_IRQ_STATUS, st);
+	if (st & DMAENG_IRQ_STATUS_ERROR)
+		WRITE_ONCE(d->hw_error, true);
 	complete(&d->done);
 	return IRQ_HANDLED;
 }
@@ -79,6 +87,7 @@ static void dmaeng_hw_init(struct dmaeng_dev *d)
 
 	memset(d->ring, 0, DMAENG_RING_BYTES);
 	d->tail = 0;
+	d->nowait_desc = NULL;
 
 	/* Spec 5.6 rule 3: _HI first, then _LO */
 	dmaeng_wr(d, DMAENG_REG_RING_BASE_HI, upper_32_bits(d->ring_dma));
@@ -111,6 +120,47 @@ static int dmaeng_wait(struct dmaeng_dev *d, struct dmaeng_desc *desc)
 	}
 }
 
+/* Spin on OWN. No interrupt was requested, so this is the only way to know. */
+static int dmaeng_poll(struct dmaeng_desc *desc)
+{
+	unsigned long deadline = jiffies + DMAENG_XFER_TIMEOUT;
+
+	while (le32_to_cpu(READ_ONCE(desc->flags)) & DMAENG_DESC_OWN) {
+		if (time_after(jiffies, deadline))
+			return -ETIMEDOUT;
+		cpu_relax();
+		cond_resched();		/* the engine may need this CPU */
+	}
+	return 0;
+}
+
+/*
+ * Queue depth stays 1 across a NOWAIT submit: the next submit first settles
+ * the previous one. Nothing here reads a register unless the transfer has
+ * not finished, so the common case adds no MMIO to the measured path.
+ */
+static int dmaeng_reap_nowait(struct dmaeng_dev *d)
+{
+	struct dmaeng_desc *desc = d->nowait_desc;
+
+	if (!desc)
+		return 0;
+
+	if (le32_to_cpu(READ_ONCE(desc->flags)) & DMAENG_DESC_OWN) {
+		if (!(dmaeng_rd(d, DMAENG_REG_STATUS) & DMAENG_STATUS_ERROR) &&
+		    !time_after(jiffies, d->nowait_deadline))
+			return -EBUSY;
+		dmaeng_hw_init(d);
+		return 0;
+	}
+
+	dma_rmb();			/* OWN clear before reading status */
+	if (READ_ONCE(desc->status) || READ_ONCE(d->hw_error))
+		dmaeng_hw_init(d);	/* the device stopped; restart it */
+	d->nowait_desc = NULL;
+	return 0;
+}
+
 static int dmaeng_status_to_errno(u32 status)
 {
 	switch (status) {
@@ -130,14 +180,21 @@ static int dmaeng_status_to_errno(u32 status)
  * Caller holds submit_lock.
  */
 static int dmaeng_xfer(struct dmaeng_dev *d, const struct dmaeng_xfer *x,
-		       u64 *lat_ns)
+		       u64 *lat_ns, u32 *desc_idx)
 {
-	struct dmaeng_desc *desc = &d->ring[d->tail];
+	struct dmaeng_desc *desc;
 	u32 desc_flags = DMAENG_DESC_OWN | DMAENG_DESC_IRQ | DMAENG_DESC_LAST;
 	u64 start;
 	u32 status;
 	int ret;
 
+	ret = dmaeng_reap_nowait(d);
+	if (ret)
+		return ret;
+
+	desc = &d->ring[d->tail];
+	*desc_idx = d->tail;
+	WRITE_ONCE(d->hw_error, false);
 	reinit_completion(&d->done);
 
 	desc->src = cpu_to_le64(d->buf_dma + x->src_off);
@@ -151,8 +208,19 @@ static int dmaeng_xfer(struct dmaeng_dev *d, const struct dmaeng_xfer *x,
 		desc->src = cpu_to_le64(DMAENG_FAULT_ADDR);
 	if (x->flags & DMAENG_XFER_FAULT_RSVD)
 		desc->_rsvd = cpu_to_le32(1);
-	if (x->flags & DMAENG_XFER_FAULT_NO_IRQ)
+	if (x->flags & (DMAENG_XFER_FAULT_NO_IRQ | DMAENG_XFER_PATH_FLAGS))
 		desc_flags &= ~DMAENG_DESC_IRQ;
+	if (x->flags & DMAENG_XFER_FAULT_NO_OWN)
+		desc_flags &= ~DMAENG_DESC_OWN;
+	if (x->flags & DMAENG_XFER_FAULT_RING_ALIGN)
+		dmaeng_wr(d, DMAENG_REG_RING_BASE_LO,
+			  lower_32_bits(d->ring_dma) + 1);
+	if (x->flags & DMAENG_XFER_FAULT_RING_ADDR) {
+		dmaeng_wr(d, DMAENG_REG_RING_BASE_HI,
+			  upper_32_bits(DMAENG_FAULT_ADDR));
+		dmaeng_wr(d, DMAENG_REG_RING_BASE_LO,
+			  lower_32_bits(DMAENG_FAULT_ADDR));
+	}
 
 	dma_wmb();			/* fields visible before OWN */
 	desc->flags = cpu_to_le32(desc_flags);
@@ -162,12 +230,25 @@ static int dmaeng_xfer(struct dmaeng_dev *d, const struct dmaeng_xfer *x,
 	wmb();				/* descriptor visible before doorbell */
 	dmaeng_wr(d, DMAENG_REG_TAIL, d->tail);
 
-	ret = dmaeng_wait(d, desc);
+	if (x->flags & DMAENG_XFER_NOWAIT) {
+		d->nowait_desc = desc;
+		d->nowait_deadline = jiffies + DMAENG_XFER_TIMEOUT;
+		*lat_ns = 0;
+		return 0;
+	}
+
+	if (x->flags & DMAENG_XFER_POLL)
+		ret = dmaeng_poll(desc);
+	else
+		ret = dmaeng_wait(d, desc);
 	*lat_ns = ktime_get_ns() - start;
 	if (!ret) {
 		dma_rmb();		/* OWN clear before reading status */
 		status = le32_to_cpu(READ_ONCE(desc->status));
 		ret = dmaeng_status_to_errno(status);
+		/* OWN clear and status 0 still fails if the device stopped */
+		if (!ret && READ_ONCE(d->hw_error))
+			ret = -EIO;
 	}
 
 	/* The device stops on an error, and may still own desc if we gave up */
@@ -198,7 +279,8 @@ static long dmaeng_ioctl_submit(struct dmaeng_dev *d, void __user *arg)
 	 * Length limits stay the device's job (spec 5.5), so only overlap,
 	 * which has no defined copy order, is also refused here.
 	 */
-	if ((x.flags & ~DMAENG_XFER_VALID_FLAGS) ||
+	if ((x.flags & ~DMAENG_XFER_VALID_FLAGS) || x._pad ||
+	    (x.flags & DMAENG_XFER_PATH_FLAGS) == DMAENG_XFER_PATH_FLAGS ||
 	    !dmaeng_in_buf(d, x.src_off, x.len) ||
 	    !dmaeng_in_buf(d, x.dst_off, x.len))
 		return -EINVAL;
@@ -208,7 +290,7 @@ static long dmaeng_ioctl_submit(struct dmaeng_dev *d, void __user *arg)
 	ret = mutex_lock_interruptible(&d->submit_lock);
 	if (ret)
 		return ret;
-	ret = dmaeng_xfer(d, &x, &x.lat_ns);
+	ret = dmaeng_xfer(d, &x, &x.lat_ns, &x.desc_idx);
 	mutex_unlock(&d->submit_lock);
 	if (ret)
 		return ret;
@@ -245,14 +327,36 @@ static long dmaeng_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 static int dmaeng_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 	struct dmaeng_dev *d = filp->private_data;
+	size_t size = vma->vm_end - vma->vm_start;
+	unsigned long pgoff = vma->vm_pgoff;
 
 	/* A private mapping would copy on write and stop seeing the device */
 	if (!(vma->vm_flags & VM_SHARED))
 		return -EINVAL;
-	/* An unchecked length here would disclose kernel memory */
-	if (vma->vm_pgoff || vma->vm_end - vma->vm_start > d->buf_bytes)
-		return -EINVAL;
 
+	/* An unchecked length here would disclose kernel memory */
+	switch (pgoff) {
+	case DMAENG_MMAP_PGOFF_BUF:
+		if (size > d->buf_bytes)
+			return -EINVAL;
+		break;
+	case DMAENG_MMAP_PGOFF_RING:
+		if (size > PAGE_ALIGN(DMAENG_RING_BYTES))
+			return -EINVAL;
+		/* Writing OWN or addresses here would steer the engine */
+		if (vma->vm_flags & VM_WRITE)
+			return -EPERM;
+		vm_flags_clear(vma, VM_MAYWRITE);
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	/* The offset chose the region; it is not an offset into it */
+	vma->vm_pgoff = 0;
+	if (pgoff == DMAENG_MMAP_PGOFF_RING)
+		return dma_mmap_coherent(d->dev, vma, d->ring, d->ring_dma,
+					 DMAENG_RING_BYTES);
 	return dma_mmap_coherent(d->dev, vma, d->buf, d->buf_dma, d->buf_bytes);
 }
 
