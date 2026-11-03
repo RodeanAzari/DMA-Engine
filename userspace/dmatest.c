@@ -306,16 +306,21 @@ static void test_nowait_busy(int fd, uint8_t *buf)
 		.src_off = SRC_OFF, .dst_off = DST_OFF, .len = COPY_LEN,
 		.flags = DMAENG_XFER_NOWAIT,
 	};
-	int ret, status;
+	struct dmaeng_xfer second = x;
+	int status;
 
 	CHECK(!ioctl(fd, DMAENG_SUBMIT, &x), "submit: %s", strerror(errno));
-	ret = submit(fd, SRC_OFF, DST_OFF, COPY_LEN, 0);
-	if (ret) {
-		CHECK(ret == -EBUSY, "got %s, want EBUSY", strerror(-ret));
+	if (ioctl(fd, DMAENG_SUBMIT, &second)) {
+		CHECK(errno == EBUSY, "got %s, want EBUSY", strerror(errno));
 		status = poll_ring(x.desc_idx);
 		CHECK(status == 0, "in-flight transfer ended with %d", status);
 		printf("no-wait in flight: EBUSY\n");
 	} else {
+		/* Accepted is only right if the first had really finished */
+		CHECK(!(ring_field(x.desc_idx, DMAENG_DESC_OFF_FLAGS) & DMAENG_DESC_OWN),
+		      "second submit accepted with the first in flight");
+		status = poll_ring(second.desc_idx);
+		CHECK(status == 0, "second transfer ended with %d", status);
 		printf("no-wait in flight: SKIPPED, transfer finished first (needs a long completion delay)\n");
 	}
 	copy_and_verify(fd, buf, COPY_LEN, 0x55);
