@@ -36,7 +36,7 @@ jobs:
           status=0
           for f in driver/dmaeng_core.c driver/dmaeng_core.h driver/dmaeng_host.c \
                    driver/dmaeng_pci.c driver/dmaeng_uapi.h qemu-device/dmaeng.c \
-                   userspace/dmatest.c; do
+                   userspace/dmatest.c userspace/dmademo.c; do
             "$HOME/checkpatch/checkpatch.pl" --no-tree -f "$f" || status=1
           done
           exit $status
