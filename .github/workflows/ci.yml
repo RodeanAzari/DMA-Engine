@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  QEMU_VERSION: 11.1.2
+  CHECKPATCH_TAG: v6.12
+
+jobs:
+  generated:
+    name: Generated files match the spec
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install pyyaml
+      - run: python3 scripts/gen-regs.py
+      - run: git diff --exit-code
+
+  checkpatch:
+    name: checkpatch
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch checkpatch
+        run: |
+          base=https://raw.githubusercontent.com/torvalds/linux/$CHECKPATCH_TAG/scripts
+          mkdir -p "$HOME/checkpatch"
+          for f in checkpatch.pl spelling.txt const_structs.checkpatch; do
+            curl -fsSL "$base/$f" -o "$HOME/checkpatch/$f"
+          done
+          chmod +x "$HOME/checkpatch/checkpatch.pl"
+      - name: Run checkpatch
+        run: |
+          status=0
+          for f in driver/dmaeng_core.c driver/dmaeng_core.h driver/dmaeng_host.c \
+                   driver/dmaeng_pci.c driver/dmaeng_uapi.h qemu-device/dmaeng.c \
+                   userspace/dmatest.c; do
+            "$HOME/checkpatch/checkpatch.pl" --no-tree -f "$f" || status=1
+          done
+          exit $status
+
+  build:
+    name: Driver and userspace
+    runs-on: ubuntu-24.04
+    # Debian 13 is what the T490 runs: kernel series 6.12
+    container: debian:13
+    steps:
+      - name: Install toolchain and kernel headers
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential linux-headers-amd64 ca-certificates git
+      - uses: actions/checkout@v4
+      - name: Check the kernel series
+        run: |
+          KDIR=$(ls -d /usr/src/linux-headers-*-amd64 | head -1)
+          echo "KDIR=$KDIR" >> "$GITHUB_ENV"
+          echo "$KDIR"
+          echo "$KDIR" | grep -q 'linux-headers-6\.12\.'
+      - name: Build the modules, warnings are errors
+        run: make -C driver KDIR="$KDIR" KCFLAGS=-Werror
+      - name: Build the fault-injection variant
+        run: |
+          make -C driver KDIR="$KDIR" clean
+          make -C driver KDIR="$KDIR" KCFLAGS=-Werror FAULT_INJECT=1
+      - name: Build userspace, warnings are errors
+        run: make -C userspace CFLAGS=-Werror\ -Wall\ -Wextra\ -O2\ -I../driver\ -I../include
+
+  qemu-device:
+    name: Device model compiles against QEMU
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install QEMU build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ninja-build python3-venv pkg-config libglib2.0-dev libpixman-1-dev \
+            flex bison
+      - name: Fetch QEMU
+        run: |
+          curl -fsSL "https://download.qemu.org/qemu-$QEMU_VERSION.tar.xz" | tar xJ -C "$HOME"
+      - name: Install the device and configure
+        run: |
+          scripts/install-qemu-device.sh "$HOME/qemu-$QEMU_VERSION"
+          cd "$HOME/qemu-$QEMU_VERSION"
+          ./configure --target-list=riscv64-softmmu --enable-debug
+      - name: Compile only the device
+        run: ninja -C "$HOME/qemu-$QEMU_VERSION/build" libsystem.a.p/hw_misc_dmaeng.c.o
