@@ -110,18 +110,25 @@ static void test_device_error_recovers(int fd, uint8_t *buf,
 	printf("device errors reported, driver recovered\n");
 }
 
-/* An oversized mmap would disclose kernel memory */
+/*
+ * An oversized mmap would disclose kernel memory. dma_mmap_coherent() also
+ * refuses it, with ENXIO; requiring EINVAL proves the driver's own check,
+ * which must not depend on what each architecture's DMA code does.
+ */
 static void test_mmap_limits(int fd, const struct dmaeng_info *info)
 {
 	size_t page = sysconf(_SC_PAGESIZE);
 	void *p;
 
 	p = mmap(NULL, info->buf_bytes + page, PROT_READ, MAP_SHARED, fd, 0);
-	CHECK(p == MAP_FAILED, "oversized mmap allowed");
-	p = mmap(NULL, page, PROT_READ, MAP_SHARED, fd, info->buf_bytes);
-	CHECK(p == MAP_FAILED, "offset mmap allowed");
+	CHECK(p == MAP_FAILED && errno == EINVAL, "oversized mmap: %s",
+	      p == MAP_FAILED ? strerror(errno) : "allowed");
+	p = mmap(NULL, page, PROT_READ, MAP_SHARED, fd, page);
+	CHECK(p == MAP_FAILED && errno == EINVAL, "offset mmap: %s",
+	      p == MAP_FAILED ? strerror(errno) : "allowed");
 	p = mmap(NULL, page, PROT_READ, MAP_PRIVATE, fd, 0);
-	CHECK(p == MAP_FAILED, "private mmap allowed");
+	CHECK(p == MAP_FAILED && errno == EINVAL, "private mmap: %s",
+	      p == MAP_FAILED ? strerror(errno) : "allowed");
 	printf("mmap limits enforced\n");
 }
 
