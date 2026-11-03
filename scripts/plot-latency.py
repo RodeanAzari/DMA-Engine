@@ -2,7 +2,7 @@
 """Turn raw results/*.csv.gz into percentile tables and plots.
 
 Replaces the generated block of docs/results.md and writes docs/imgs/latency-*.png.
-Statistics live here, never in the measurement loop (CLAUDE.md section 8.2).
+Statistics live here, never in the measurement loop.
 
 Usage: scripts/plot-latency.py        (from the repo root; needs matplotlib)
 """
