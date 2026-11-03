@@ -5,6 +5,9 @@ obj-m += dmaeng-pci.o
 dmaeng-pci-y := dmaeng_core.o dmaeng_pci.o
 
 ccflags-y += -I$(src)/../include
+ifdef FAULT_INJECT
+ccflags-y += -DDMAENG_FAULT_INJECT
+endif
 
 KDIR ?= /lib/modules/$(shell uname -r)/build
 

@@ -29,6 +29,16 @@
 
 #define DMAENG_XFER_TIMEOUT	HZ
 
+#ifdef DMAENG_FAULT_INJECT
+#define DMAENG_XFER_VALID_FLAGS	(DMAENG_XFER_FAULT_BAD_ADDR | \
+				 DMAENG_XFER_FAULT_RSVD | \
+				 DMAENG_XFER_FAULT_NO_IRQ)
+#else
+#define DMAENG_XFER_VALID_FLAGS	0U
+#endif
+
+#define DMAENG_FAULT_ADDR	0xFFFFFFFFFFFF0000ULL
+
 static_assert((DMAENG_RING_ENTRIES & (DMAENG_RING_ENTRIES - 1)) == 0);
 static_assert((DMAENG_RING_ENTRIES >= DMAENG_RING_SIZE_MIN) &&
 	      (DMAENG_RING_ENTRIES <= DMAENG_RING_SIZE_MAX));
@@ -119,24 +129,33 @@ static int dmaeng_status_to_errno(u32 status)
  * Submit one copy within the data buffer and wait for it (queue depth 1).
  * Caller holds submit_lock.
  */
-static int dmaeng_xfer(struct dmaeng_dev *d, u64 src_off, u64 dst_off, u32 len,
+static int dmaeng_xfer(struct dmaeng_dev *d, const struct dmaeng_xfer *x,
 		       u64 *lat_ns)
 {
 	struct dmaeng_desc *desc = &d->ring[d->tail];
+	u32 desc_flags = DMAENG_DESC_OWN | DMAENG_DESC_IRQ | DMAENG_DESC_LAST;
 	u64 start;
 	u32 status;
 	int ret;
 
 	reinit_completion(&d->done);
 
-	desc->src = cpu_to_le64(d->buf_dma + src_off);
-	desc->dst = cpu_to_le64(d->buf_dma + dst_off);
-	desc->len = cpu_to_le32(len);
+	desc->src = cpu_to_le64(d->buf_dma + x->src_off);
+	desc->dst = cpu_to_le64(d->buf_dma + x->dst_off);
+	desc->len = cpu_to_le32(x->len);
 	desc->status = 0;
 	desc->_rsvd = 0;
+
+	/* x->flags can only be non-zero in a FAULT_INJECT build */
+	if (x->flags & DMAENG_XFER_FAULT_BAD_ADDR)
+		desc->src = cpu_to_le64(DMAENG_FAULT_ADDR);
+	if (x->flags & DMAENG_XFER_FAULT_RSVD)
+		desc->_rsvd = cpu_to_le32(1);
+	if (x->flags & DMAENG_XFER_FAULT_NO_IRQ)
+		desc_flags &= ~DMAENG_DESC_IRQ;
+
 	dma_wmb();			/* fields visible before OWN */
-	desc->flags = cpu_to_le32(DMAENG_DESC_OWN | DMAENG_DESC_IRQ |
-				  DMAENG_DESC_LAST);
+	desc->flags = cpu_to_le32(desc_flags);
 	d->tail = (d->tail + 1) & (d->ring_entries - 1);
 
 	start = ktime_get_ns();
@@ -179,7 +198,8 @@ static long dmaeng_ioctl_submit(struct dmaeng_dev *d, void __user *arg)
 	 * Length limits stay the device's job (spec 5.5), so only overlap,
 	 * which has no defined copy order, is also refused here.
 	 */
-	if (x.flags || !dmaeng_in_buf(d, x.src_off, x.len) ||
+	if ((x.flags & ~DMAENG_XFER_VALID_FLAGS) ||
+	    !dmaeng_in_buf(d, x.src_off, x.len) ||
 	    !dmaeng_in_buf(d, x.dst_off, x.len))
 		return -EINVAL;
 	if (x.src_off < x.dst_off + x.len && x.dst_off < x.src_off + x.len)
@@ -188,7 +208,7 @@ static long dmaeng_ioctl_submit(struct dmaeng_dev *d, void __user *arg)
 	ret = mutex_lock_interruptible(&d->submit_lock);
 	if (ret)
 		return ret;
-	ret = dmaeng_xfer(d, x.src_off, x.dst_off, x.len, &x.lat_ns);
+	ret = dmaeng_xfer(d, &x, &x.lat_ns);
 	mutex_unlock(&d->submit_lock);
 	if (ret)
 		return ret;

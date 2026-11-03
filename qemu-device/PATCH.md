@@ -19,3 +19,21 @@ Check it registered:
 ```
 
 Attach it with `scripts/run-qemu.sh -device dmaeng`, or `-device dmaeng,completion-delay-ns=5000` for delayed completion.
+
+## Trace format
+
+`-device dmaeng,trace-file=<path>` appends one record per line, in the order the device saw them. This is the stimulus and expected result for verifying the future RTL. Addresses are guest-physical and vary between runs.
+
+| Record | Meaning |
+|---|---|
+| `RD <off> <val>` | Register read and the value returned |
+| `WR <off> <val>` | Register write |
+| `DESC head= addr= src= dst= len= flags= rsvd=` | Descriptor fetched with OWN set, flags as fetched |
+| `SRC <hex>` | Source bytes |
+| `DST_BEFORE <hex>` | Destination bytes before the copy |
+| `DST_AFTER <hex>` | Destination bytes after the copy |
+| `DONE status=` | Status written back for that descriptor |
+| `MSI` | Interrupt sent (rising edge of `IRQ_STATUS & IRQ_MASK`) |
+| `ERROR code=` | Device stopped until `CTRL.RESET` |
+
+A descriptor rejected before the copy has `DESC` and `DONE` but no data records. An error found before a descriptor is owned has `ERROR` only.
